@@ -1,0 +1,97 @@
+#!/bin/bash
+#Author: Raul Bringas Jr.
+#First Revision: 06/23/2014
+
+#Requirements:
+#Raspberry Pi
+#DHT11 Sensor
+#http://www.amazon.com/20-90%25RH-Sensitivity-Control-Temperature-Humidity/dp/B00BXWUWRA/ref=sr_1_1?ie=UTF8&qid=1403661774&sr=8-1&keywords=dht11
+#wiringPii - git clone git://git.drogon.net/wiringPi
+#Adafruit: http://github.com/adafruit/Adafruit_Python_DHT
+#Python
+
+#References:
+#https://learn.adafruit.com/dht-humidity-sensing-on-raspberry-pi-with-gdocs-logging/connecting-to-googles-docs-updated
+#https://projects.drogon.net/raspberry-pi/wiringpi/download-and-install/
+#https://projects.drogon.net/raspberry-pi/wiringpi/pins/
+
+#This program will use the DHT11 Temp/Humidity sensor to monitor Temp/Humidity in a humidor
+
+#This implementation utilizes 3 leds (Red,Yellow,Green)
+#Each of these leds will indicate the status at a glance
+#Red=humidity too low, Yellow=Add water, humidity not optimal, Green=humidity is ideal
+
+#Will use google docs as well to monitor daily temperatures in a spreadsheet
+#Email alerts will be sent if humidity is too low
+
+#Adafruit_DHT usage:
+#usage: sudo ./Adafruit_DHT.py [11|22|2302] GPIOpin#
+#example: sudo ./Adafruit_DHT.py 11 4 - Read from an DHT11 sensor connected to GPIO #4
+
+#Define temperature and relative humidity variables
+temp_in_celsius=`sudo ./AdafruitDHT.py 11 4 | cut -d"=" -f2 | cut -d"." -f1`
+relative_humidity=`sudo ./AdafruitDHT.py 11 4 | cut -d"=" -f3 | cut -d"." -f1`
+temp_in_fahrenheit=$(echo "scale=2;((9/5) * $temp_in_celsius) + 32" |bc)
+
+#Define LEDs based on their GPIO pin connectivity
+red_led=0
+yellow_led=1
+green_led=2
+
+#Define a variable for the current date and time
+current_date=`date "+%m/%d/%y %H:%M:%S"`
+
+#Remove the previous email message text file
+rm -f $email_message
+
+#Output Temp and Humidity to std out and email message
+echo "Temperature in Celsius is:" $temp_in_celsius | tee -a $email_message
+echo "Temperature in Fahrenheit is:" $temp_in_fahrenheit | tee -a $email_message
+echo "Humidity Percentage is:" $relative_humidity"%" | tee -a $email_message
+
+#Initialize GPIO pins for output
+for i in 0 1 2 3 4; do sudo gpio mode $i out; done
+
+#Check the humidity levels and turn on the corresponding led
+if  [ $relative_humidity -ge 60 ]; then
+	gpio write $yellow_led 1
+fi
+
+if  [ $relative_humidity -ge 65 ]; then
+	rh_message="Humidity is in the optimal range"
+	rh_status="Humidity is Optimal"
+	gpio write $yellow_led 0
+	gpio write $red_led 0
+	gpio write $green_led 1
+fi
+
+if [ $relative_humidity -le 64 ]; then
+	rh_message="Humidity is too low, add humidification!"
+	rh_status="Humidity is too low!"
+	gpio write $red_led 1
+	gpio write $green_led 0
+fi
+
+if [ $relative_humidity -gt  70 ]; then
+	rh_message="Humidity is too high, reduce humidification!"
+	rh_status="Humidity is too high!"
+	gpio write $yellow_led 0
+	gpio write $red_led 1
+	gpio write $green_led 0
+fi
+
+#Output the relative humidity message and append to email message
+echo $rh_message | tee -a $email_message
+
+#Prepare Email message
+#Current Date and Time
+current_date=`date "+%m/%d/%y %H:%M:%S"`
+#Email subject
+subject="Humidor Alert:$current_date - Status: $rh_status"
+#Email address to send alerts to
+email="raulbringasjr@gmail.com"
+#Email text/message
+email_message="/tmp/humidoremailmessage.txt"
+
+#Send an email using /bin/mail
+/usr/bin/mail -s "$subject" "$email" < $email_message
